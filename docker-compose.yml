@@ -1,0 +1,119 @@
+services:
+  app:
+    image: processmaker-local:dev
+    build:
+      context: ./docker/php
+    environment:
+      RUN_SETUP: "1"
+      SKIP_EXECUTORS: "true"
+      PM_URL: http://localhost:8080
+      PM_BROADCAST_HOST: http://localhost:6001
+      PM_DB_HOST: mysql
+      PM_DB_PORT: "3306"
+      PM_DB_DATABASE: processmaker
+      PM_DB_USERNAME: pm
+      PM_DB_PASSWORD: secret
+      PM_ADMIN_USER: admin
+      PM_ADMIN_PASSWORD: admin123
+      PM_ADMIN_EMAIL: admin@processmaker.local
+      REDIS_CLIENT: phpredis
+      REDIS_HOST: redis
+      CACHE_DRIVER: redis
+      QUEUE_DRIVER: redis
+      FORCE_HTTPS: "false"
+    volumes:
+      - .:/var/www/html
+      - vendor:/var/www/html/vendor
+      - node_modules:/var/www/html/node_modules
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - .:/var/www/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  horizon:
+    image: processmaker-local:dev
+    build:
+      context: ./docker/php
+    command: ["php", "artisan", "horizon"]
+    environment:
+      WAIT_FOR_SETUP: "1"
+      SKIP_EXECUTORS: "true"
+      REDIS_CLIENT: phpredis
+      REDIS_HOST: redis
+      CACHE_DRIVER: redis
+      QUEUE_DRIVER: redis
+      FORCE_HTTPS: "false"
+    volumes:
+      - .:/var/www/html
+      - vendor:/var/www/html/vendor
+      - node_modules:/var/www/html/node_modules
+    depends_on:
+      - app
+      - redis
+    restart: unless-stopped
+
+  echo:
+    image: processmaker-local:dev
+    build:
+      context: ./docker/php
+    command:
+      - node_modules/.bin/laravel-echo-server
+      - start
+      - --config
+      - /opt/echo/laravel-echo-server.json
+      - --force
+    environment:
+      WAIT_FOR_SETUP: "1"
+    ports:
+      - "6001:6001"
+    volumes:
+      - .:/var/www/html
+      - node_modules:/var/www/html/node_modules
+      - ./docker/echo/laravel-echo-server.json:/opt/echo/laravel-echo-server.json:ro
+    depends_on:
+      - app
+      - redis
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    ports:
+    - "3306:3306"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: processmaker
+      MYSQL_USER: pm
+      MYSQL_PASSWORD: secret
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/01-landlord.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+volumes:
+  vendor:
+  node_modules:
+  mysql_data:
